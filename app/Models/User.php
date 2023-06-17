@@ -84,6 +84,7 @@ class User extends Authenticatable
         return $this->hasMany(Subscription::class, "userId")->orderBy('created_at', 'desc');
     }
 
+
     /**
      * Get the id.
      */

@@ -2,14 +2,51 @@
 
 namespace App\Models;
 
+use Illuminate\Support\Str;
+use Laravel\Cashier\SubscriptionItem;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Laravel\Cashier\SubscriptionItem;
 
 class Item extends SubscriptionItem
 {
     use HasFactory;
+
+    /**
+     * The model's default attributes.
+     *
+     * @var array
+     */
+    protected $attributes = [
+        'id' => null,
+    ];
+
+    /**
+     * The model's default attributes.
+     *
+     */
+    function __construct()
+    {
+        if ($this->attributes['id'] == null) {
+            $this->attributes['id'] = "item_" . md5(time() . Str::random(10));
+        }
+    }
+
+
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
+    protected $table = 'Item';
+
+    /**
+     * Disable the timestamps with the model.
+     *
+     * @var boll
+     */
+    // public $timestamps = false;
+
 
 
     /**
@@ -28,9 +65,10 @@ class Item extends SubscriptionItem
      */
     protected function id(): Attribute
     {
+        $subscription_id = "item_" . md5(time() . Str::random(10));
         return Attribute::make(
-            get: fn (string $value) => "$value",
-            set: fn (string $value) => "$value",
+            get: fn ($value) => is_null($value) ? $subscription_id : "$value",
+            set: fn ($value) => is_null($value) ? $subscription_id : "$value",
         );
     }
 }

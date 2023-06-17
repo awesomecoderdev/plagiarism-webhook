@@ -44,7 +44,8 @@ class WebhookController extends Controller
     {
         $payload = json_decode($request->getContent(), true);
         $method = 'handle' . Str::studly(str_replace('.', '_', $payload['type']));
-        Log::channel("stripe")->info("Webhook received" . json_encode($payload, JSON_PRETTY_PRINT));
+        // Log::channel("stripe")->info("Webhook received" . json_encode($payload, JSON_PRETTY_PRINT));
+        // Log::channel("stripe")->info("Webhook received.\n");
 
         WebhookReceived::dispatch($payload);
 
@@ -70,9 +71,11 @@ class WebhookController extends Controller
     protected function handleCustomerSubscriptionCreated(array $payload)
     {
         $user = $this->getUserByStripeId($payload['data']['object']['customer']);
+        Log::channel("stripe")->info("Subscription create event.");
 
         if ($user) {
             $data = $payload['data']['object'];
+            Log::channel("stripe")->info("Subscription created for $user->name.");
 
             if (!$user->subscriptions->contains('stripe_id', $data['id'])) {
                 if (isset($data['trial_end'])) {
@@ -84,23 +87,39 @@ class WebhookController extends Controller
                 $firstItem = $data['items']['data'][0];
                 $isSinglePrice = count($data['items']['data']) === 1;
 
-                $subscription = $user->subscriptions()->create([
-                    'name' => $data['metadata']['name'] ?? $this->newSubscriptionName($payload),
-                    'stripe_id' => $data['id'],
-                    'stripe_status' => $data['status'],
-                    'stripe_price' => $isSinglePrice ? $firstItem['price']['id'] : null,
-                    'quantity' => $isSinglePrice && isset($firstItem['quantity']) ? $firstItem['quantity'] : null,
-                    'trial_ends_at' => $trialEndsAt,
-                    'ends_at' => null,
-                ]);
 
-                foreach ($data['items']['data'] as $item) {
-                    $subscription->items()->create([
-                        'stripe_id' => $item['id'],
-                        'stripe_product' => $item['price']['product'],
-                        'stripe_price' => $item['price']['id'],
-                        'quantity' => $item['quantity'] ?? null,
+                try {
+                    $subscription_id = "sub_" . md5(time() . Str::random(10));
+                    $subscription = $user->subscriptions()->create([
+                        'id' => $subscription_id,
+                        'name' => $data['metadata']['name'] ?? $this->newSubscriptionName($payload),
+                        'stripe_id' => $data['id'],
+                        'stripe_status' => $data['status'],
+                        'stripe_price' => $isSinglePrice ? $firstItem['price']['id'] : null,
+                        'quantity' => $isSinglePrice && isset($firstItem['quantity']) ? $firstItem['quantity'] : null,
+                        'trial_ends_at' => $trialEndsAt,
+                        'ends_at' => null,
                     ]);
+                    Log::channel("stripe")->info("Subscription created id:$subscription->id.\n");
+
+                    foreach ($data['items']['data'] as $item) {
+                        try {
+                            $item_id = "item_" . md5(time() . Str::random(10));
+                            $subscription->items()->create([
+                                'id' => $item_id,
+                                'subscription_id' => $subscription->id,
+                                'stripe_id' => $item['id'],
+                                'stripe_product' => $item['price']['product'],
+                                'stripe_price' => $item['price']['id'],
+                                'quantity' => $item['quantity'] ?? 1,
+                            ]);
+                            Log::channel("stripe")->info("Subscription Item created id: $item_id.\n");
+                        } catch (\Exception $e) {
+                            Log::channel("stripe")->info("Subscription Item creating error {$e->getMessage()} .\n");
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::channel("stripe")->info("Subscription creating error {$e->getMessage()} .\n");
                 }
             }
         }
@@ -127,79 +146,89 @@ class WebhookController extends Controller
      */
     protected function handleCustomerSubscriptionUpdated(array $payload)
     {
+        Log::channel("stripe")->info("Subscription update request.");
+
         if ($user = $this->getUserByStripeId($payload['data']['object']['customer'])) {
             $data = $payload['data']['object'];
 
-            $subscription = $user->subscriptions()->firstOrNew(['stripe_id' => $data['id']]);
+            try {
+                $subscription = $user->subscriptions()->firstOrNew(['stripe_id' => $data['id']]);
 
-            if (
-                isset($data['status']) &&
-                $data['status'] === StripeSubscription::STATUS_INCOMPLETE_EXPIRED
-            ) {
-                $subscription->items()->delete();
-                $subscription->delete();
+                Log::channel("stripe")->info("Subscription:$subscription->id updated for $user->name.\n");
 
-                return;
-            }
-
-            $subscription->name = $subscription->name ?? $data['metadata']['name'] ?? $this->newSubscriptionName($payload);
-
-            $firstItem = $data['items']['data'][0];
-            $isSinglePrice = count($data['items']['data']) === 1;
-
-            // Price...
-            $subscription->stripe_price = $isSinglePrice ? $firstItem['price']['id'] : null;
-
-            // Quantity...
-            $subscription->quantity = $isSinglePrice && isset($firstItem['quantity']) ? $firstItem['quantity'] : null;
-
-            // Trial ending date...
-            if (isset($data['trial_end'])) {
-                $trialEnd = Carbon::createFromTimestamp($data['trial_end']);
-
-                if (!$subscription->trial_ends_at || $subscription->trial_ends_at->ne($trialEnd)) {
-                    $subscription->trial_ends_at = $trialEnd;
-                }
-            }
-
-            // Cancellation date...
-            if (isset($data['cancel_at_period_end'])) {
-                if ($data['cancel_at_period_end']) {
-                    $subscription->ends_at = $subscription->onTrial()
-                        ? $subscription->trial_ends_at
-                        : Carbon::createFromTimestamp($data['current_period_end']);
-                } elseif (isset($data['cancel_at'])) {
-                    $subscription->ends_at = Carbon::createFromTimestamp($data['cancel_at']);
-                } else {
-                    $subscription->ends_at = null;
-                }
-            }
-
-            // Status...
-            if (isset($data['status'])) {
-                $subscription->stripe_status = $data['status'];
-            }
-
-            $subscription->save();
-
-            // Update subscription items...
-            if (isset($data['items'])) {
-                $prices = [];
-
-                foreach ($data['items']['data'] as $item) {
-                    $prices[] = $item['price']['id'];
-
-                    $subscription->items()->updateOrCreate([
-                        'stripe_id' => $item['id'],
-                    ], [
-                        'stripe_product' => $item['price']['product'],
-                        'stripe_price' => $item['price']['id'],
-                        'quantity' => $item['quantity'] ?? null,
-                    ]);
+                if (
+                    isset($data['status']) &&
+                    $data['status'] === StripeSubscription::STATUS_INCOMPLETE_EXPIRED
+                ) {
+                    $subscription->items()->delete();
+                    $subscription->delete();
+                    return;
                 }
 
-                // Delete items that aren't attached to the subscription anymore...
-                $subscription->items()->whereNotIn('stripe_price', $prices)->delete();
+                $subscription->name = $subscription->name ?? $data['metadata']['name'] ?? $this->newSubscriptionName($payload);
+
+                $firstItem = $data['items']['data'][0];
+                $isSinglePrice = count($data['items']['data']) === 1;
+
+                // Price...
+                $subscription->stripe_price = $isSinglePrice ? $firstItem['price']['id'] : null;
+
+                // Quantity...
+                $subscription->quantity = $isSinglePrice && isset($firstItem['quantity']) ? $firstItem['quantity'] : 1;
+
+                // Trial ending date...
+                if (isset($data['trial_end'])) {
+                    $trialEnd = Carbon::createFromTimestamp($data['trial_end']);
+
+                    if (!$subscription->trial_ends_at || $subscription->trial_ends_at->ne($trialEnd)) {
+                        $subscription->trial_ends_at = $trialEnd;
+                    }
+                }
+
+                // Cancellation date...
+                if (isset($data['cancel_at_period_end'])) {
+                    if ($data['cancel_at_period_end']) {
+                        $subscription->ends_at = $subscription->onTrial()
+                            ? $subscription->trial_ends_at
+                            : Carbon::createFromTimestamp($data['current_period_end']);
+                    } elseif (isset($data['cancel_at'])) {
+                        $subscription->ends_at = Carbon::createFromTimestamp($data['cancel_at']);
+                    } else {
+                        $subscription->ends_at = null;
+                    }
+                }
+
+                // Status...
+                if (isset($data['status'])) {
+                    $subscription->stripe_status = $data['status'];
+                }
+
+                $subscription->save();
+
+                // Update subscription items...
+                if (isset($data['items'])) {
+                    $prices = [];
+
+                    foreach ($data['items']['data'] as $item) {
+                        $prices[] = $item['price']['id'];
+                        // $item_id = "item_" . md5(time() . Str::random(10));
+
+                        $subscription->items()->updateOrCreate([
+                            'stripe_id' => $item['id'],
+                            'subscription_id' => $subscription->id,
+                        ], [
+                            // 'id' => $item_id,
+                            'stripe_product' => $item['price']['product'],
+                            'stripe_price' => $item['price']['id'],
+                            'quantity' => $item['quantity'] ?? null,
+                        ]);
+                    }
+
+                    // Delete items that aren't attached to the subscription anymore...
+                    $subscription->items()->whereNotIn('stripe_price', $prices)->delete();
+                }
+            } catch (\Exception $e) {
+                Log::channel("stripe")->info("Subscription updating error {$e->getMessage()} .\n");
             }
         }
 
@@ -214,7 +243,11 @@ class WebhookController extends Controller
      */
     protected function handleCustomerSubscriptionDeleted(array $payload)
     {
+        Log::channel("stripe")->info("Subscription deleted.\n");
+
         if ($user = $this->getUserByStripeId($payload['data']['object']['customer'])) {
+            Log::channel("stripe")->info("Subscription deleted for $user->name.\n");
+
             $user->subscriptions->filter(function ($subscription) use ($payload) {
                 return $subscription->stripe_id === $payload['data']['object']['id'];
             })->each(function ($subscription) {
