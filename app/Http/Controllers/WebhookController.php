@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Routing\Controller;
@@ -16,6 +17,7 @@ use Laravel\Cashier\Payment;
 use Laravel\Cashier\Subscription;
 use Stripe\Stripe;
 use Stripe\Subscription as StripeSubscription;
+use Stripe\Customer as StripeCustomer;
 use Symfony\Component\HttpFoundation\Response;
 
 class WebhookController extends Controller
@@ -246,18 +248,18 @@ class WebhookController extends Controller
      */
     protected function handleCustomerDeleted(array $payload)
     {
-        // if ($user = $this->getUserByStripeId($payload['data']['object']['id'])) {
-        //     $user->subscriptions->each(function (Subscription $subscription) {
-        //         $subscription->skipTrial()->markAsCanceled();
-        //     });
+        if ($user = $this->getUserByStripeId($payload['data']['object']['id'])) {
+            $user->subscriptions->each(function (Subscription $subscription) {
+                $subscription->skipTrial()->markAsCanceled();
+            });
 
-        //     $user->forceFill([
-        //         'stripe_id' => null,
-        //         'trial_ends_at' => null,
-        //         'pm_type' => null,
-        //         'pm_last_four' => null,
-        //     ])->save();
-        // }
+            // $user->forceFill([
+            //     'stripe_id' => null,
+            //     'trial_ends_at' => null,
+            //     'pm_type' => null,
+            //     'pm_last_four' => null,
+            // ])->save();
+        }
 
         return $this->successMethod();
     }
@@ -295,7 +297,9 @@ class WebhookController extends Controller
      */
     protected function getUserByStripeId($stripeId)
     {
-        return Cashier::findBillable($stripeId);
+        $stripeId = $stripeId instanceof StripeCustomer ? $stripeId->id : $stripeId;
+        $customer = $stripeId ?  User::where('stripeId', $stripeId)->first() : null;
+        return $customer;
     }
 
     /**

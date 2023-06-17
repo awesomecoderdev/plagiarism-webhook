@@ -27,6 +27,27 @@ class Subscription extends CashierSubscription
 
 
     /**
+     * Get the model related to the subscription.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
+     */
+    public function owner()
+    {
+        // return $this->belongsTo(User::class, (new $model)->getForeignKey());
+    }
+
+    /**
+     * Get the subscription items related to the subscription.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\HasMany
+     */
+    public function items()
+    {
+        return $this->hasMany(Item::class, "id");
+    }
+
+
+    /**
      * Get the id.
      */
     protected function id(): Attribute
