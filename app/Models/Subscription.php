@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Casts\AsCollection;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Laravel\Cashier\Subscription as CashierSubscription;
@@ -21,6 +22,15 @@ class Subscription extends CashierSubscription
      */
     protected $attributes = [
         'id' => null,
+    ];
+
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array
+     */
+    protected $casts = [
+        'metadata' => AsCollection::class,
     ];
 
     /**
@@ -64,6 +74,7 @@ class Subscription extends CashierSubscription
     //     "trial_ends_at",
     //     "ends_at",
     // ];
+
 
     /**
      * Get the model related to the subscription.

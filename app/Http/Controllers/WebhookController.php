@@ -97,6 +97,7 @@ class WebhookController extends Controller
                         'stripe_status' => $data['status'],
                         'stripe_price' => $isSinglePrice ? $firstItem['price']['id'] : null,
                         'quantity' => $isSinglePrice && isset($firstItem['quantity']) ? $firstItem['quantity'] : null,
+                        'metadata' => json_encode($data['metadata']),
                         'trial_ends_at' => $trialEndsAt,
                         'ends_at' => null,
                     ]);
